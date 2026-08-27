@@ -43,16 +43,16 @@ Mac port's design (not its code):
 
 ```
 src/
-  Retro.Core/            net8.0     — no WPF references
+  Headunit.Core/            net8.0     — no WPF references
     Playback/            audio graph, transport, queue
     Equalizer/           10-band biquad chain + preset store
     Analysis/            FFT tap, band bucketing, peak-hold
     Library/             SQLite index, scanner, tag reading, art cache
     Themes/              theme model, JSON (de)serialization, validation
-  Retro.Skin/            net8.0-windows — sprite atlas, tinting, widget primitives
-  Retro.Player.Windows/  net8.0-windows — WPF shell, windows, input, tray, SMTC
+  Headunit.Skin/            net8.0-windows — sprite atlas, tinting, widget primitives
+  Headunit.Player.Windows/  net8.0-windows — WPF shell, windows, input, tray, SMTC
 tests/
-  Retro.Core.Tests/      xUnit — EQ math, bucketing, scanner, theme round-trip
+  Headunit.Core.Tests/      xUnit — EQ math, bucketing, scanner, theme round-trip
 assets/
   sprites/               source PSD/Aseprite + exported grayscale PNG atlases
 themes/                  built-in presets as .rtheme.json
@@ -167,7 +167,7 @@ Winamp-ish default).
 token list on the left, live preview of the main window on the right, a color
 picker with eyedropper, "derive ramp from one color" (so a user picks *one*
 illumination color and shadow/mid/high are generated), plus Save As / Export /
-Import. Themes live in `%APPDATA%/RetroPlayer/themes/*.rtheme.json` and are
+Import. Themes live in `%APPDATA%/Headunit/themes/*.rtheme.json` and are
 single files, so they're trivially shareable.
 
 ### Window model
@@ -195,7 +195,7 @@ single files, so they're trivially shareable.
   `albums`, `artists`, `playlists`, `playlist_items`, `tracks_fts`.
 - **Identity is `path`, keyed to `(size, mtime)`** for change detection — no
   rehashing of files that haven't moved.
-- **Album art** extracted to `%LOCALAPPDATA%/RetroPlayer/artcache/{hash}.jpg`,
+- **Album art** extracted to `%LOCALAPPDATA%/Headunit/artcache/{hash}.jpg`,
   deduplicated by content hash; `folder.jpg`/`cover.png` used as fallback.
 - Playlists stored in the DB and exportable as `.m3u8`.
 
@@ -213,10 +213,10 @@ double-click to play. The full Winamp-style PL window comes in phase 2.
   transport controls.
 - **Tray icon** with a mini transport menu; close-to-tray optional.
 - **File associations** for audio types, plus "Play with", "Enqueue in
-  RetroPlayer" shell verbs, and command-line `--enqueue` for single-instance
+  Headunit" shell verbs, and command-line `--enqueue` for single-instance
   handoff via a named pipe.
 - **Single instance** — second launch forwards its file arguments and exits.
-- **Settings** in `%APPDATA%/RetroPlayer/settings.json`; the app is
+- **Settings** in `%APPDATA%/Headunit/settings.json`; the app is
   fully portable if a `portable.txt` sits next to the exe.
 
 ---
@@ -269,18 +269,21 @@ made on Windows looks identical on Mac.
 
 ---
 
-## 10. Open questions
+## 10. Decisions taken since planning
 
-1. **Name.** The repo and installer need one. Candidates: *Headunit*, *Amp2*,
-   *Backlit*, *Retrograde*, *DIN*, *Preamp*. Which direction appeals?
-2. **Which Mac-specific features from §8 do you actually want**, and are any of
-   them worth backporting to Windows?
-3. **Auto-update** — GitHub Releases + a simple check-on-launch, or no updater
-   for v1?
-4. **Code signing** — an unsigned build trips SmartScreen on every download. A
-   cert is ~$200/yr for OV. Worth it for v1, or ship unsigned and accept the
-   warning?
-5. **Does the library window need its own retro chrome in v1**, or is a plain
-   modern list acceptable until phase 2 when the real PL window lands?
-6. **Minimum Windows version** — Windows 10 1809+ is the sane floor (it's what
-   SMTC and CsWinRT want). Any need to go lower?
+| Was open | Decided | Why |
+|---|---|---|
+| Name | **Headunit** | Says what it is, distinctive, no Winamp trademark exposure. Namespaces `Headunit.Core` / `Headunit.Skin` / `Headunit.Player.Windows`; the executable is `Headunit.exe`. |
+| Library window chrome in v1 | **Plain modern list** | The M2 art budget is the largest schedule risk in this plan. Doubling it to chrome a window that phase 2 replaces with the real PL window is the wrong trade. |
+| Auto-update | **GitHub Releases + check on launch** | A version check and a "download" link. No silent background installer — this is a music player, not a browser. |
+| Code signing | **Ship v1 unsigned** | ~$200/yr for an OV cert is not worth it before anyone has used the thing. Revisit at the first public release; document the SmartScreen warning in the README until then. |
+| Minimum Windows | **Windows 10 1809 (build 17763), x64 + arm64** | The floor for `SystemMediaTransportControls` and CsWinRT. Encoded in the TFM as `net8.0-windows10.0.17763.0`.|
+
+## 11. Still open
+
+1. **Which Mac-specific features from §8 do you actually want**, and are any
+   worth backporting to Windows? Not blocking until M7.
+2. **Crossfade default** — 0 s (true to the original) or 2 s (nicer for most
+   listeners)? Decide when M1 lands and it can actually be heard.
+3. **Bundled themes beyond the eight presets** — worth shipping a theme
+   gallery/import UI in v1, or is file drag-and-drop enough?

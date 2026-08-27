@@ -1,0 +1,20 @@
+<Project>
+  <PropertyGroup>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <Deterministic>true</Deterministic>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <Product>Headunit</Product>
+    <Company>Headunit</Company>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <!-- Lets the Windows-targeted projects at least *compile* on Linux/macOS, so
+       contributors off Windows get real feedback instead of NETSDK1100. They
+       still cannot be run there. -->
+  <PropertyGroup Condition="'$(OS)' != 'Windows_NT'">
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+</Project>
