@@ -1,0 +1,29 @@
+# Build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+*.user
+*.suo
+.vs/
+
+# Publish / packaging
+publish/
+artifacts/
+*.msi
+*.msix
+*.appx
+
+# macOS (phase 3)
+.DS_Store
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# Local data
+*.db
+*.db-shm
+*.db-wal
+artcache/
