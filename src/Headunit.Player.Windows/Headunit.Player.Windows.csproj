@@ -13,5 +13,6 @@
   <ItemGroup>
     <ProjectReference Include="../Headunit.Core/Headunit.Core.csproj" />
     <ProjectReference Include="../Headunit.Skin/Headunit.Skin.csproj" />
+    <ProjectReference Include="..\Headunit.Audio.Windows\Headunit.Audio.Windows.csproj" />
   </ItemGroup>
 </Project>

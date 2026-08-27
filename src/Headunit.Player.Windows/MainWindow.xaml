@@ -9,6 +9,10 @@
         SizeToContent="WidthAndHeight"
         WindowStartupLocation="CenterScreen"
         Background="#1B1B1E"
+        AllowDrop="True"
+        DragOver="OnDragOver"
+        Drop="OnDrop"
+        Closed="OnClosed"
         TextOptions.TextFormattingMode="Display"
         TextOptions.TextRenderingMode="Aliased"
         KeyDown="OnKeyDown">
@@ -21,6 +25,46 @@
                             UseAeroCaptionButtons="False" />
     </shell:WindowChrome.WindowChrome>
 
+    <Window.Resources>
+        <!-- Placeholder illumination. These become theme tokens at M5; the
+             names already match the token names in docs/PLAN.md §4. -->
+        <SolidColorBrush x:Key="BezelFace" Color="#26262A" />
+        <SolidColorBrush x:Key="BezelEdgeLight" Color="#5A5A62" />
+        <SolidColorBrush x:Key="TitlebarActive" Color="#33333A" />
+        <SolidColorBrush x:Key="LcdBackground" Color="#120A00" />
+        <SolidColorBrush x:Key="LcdText" Color="#FFA23A" />
+        <SolidColorBrush x:Key="LcdTextDim" Color="#7A4A12" />
+        <SolidColorBrush x:Key="ButtonFace" Color="#54545A" />
+        <SolidColorBrush x:Key="ButtonGlyph" Color="#E8E8EC" />
+
+        <Style x:Key="TransportButton" TargetType="Button">
+            <Setter Property="Foreground" Value="{StaticResource ButtonGlyph}" />
+            <Setter Property="FontFamily" Value="Consolas" />
+            <Setter Property="FontSize" Value="9" />
+            <Setter Property="Width" Value="23" />
+            <Setter Property="Height" Value="18" />
+            <Setter Property="Margin" Value="0,0,2,0" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Face"
+                                Background="{StaticResource ButtonFace}"
+                                BorderBrush="{StaticResource BezelEdgeLight}"
+                                BorderThickness="1">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Face" Property="Background" Value="{StaticResource LcdText}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
     <!-- Everything inside the host is laid out in art pixels: the numbers below
          are the numbers in the sprite atlas, at 1:1. -->
     <skin:ScaledHost x:Name="Host" Scale="2">
@@ -28,11 +72,12 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="14" />
                 <RowDefinition Height="*" />
+                <RowDefinition Height="26" />
             </Grid.RowDefinitions>
 
             <!-- Title strip: drag target, and where shade mode will collapse to. -->
             <Border Grid.Row="0"
-                    Background="#33333A"
+                    Background="{StaticResource TitlebarActive}"
                     BorderBrush="#0F0F11"
                     BorderThickness="0,0,0,1"
                     MouseLeftButtonDown="OnTitleBarMouseLeftButtonDown">
@@ -55,26 +100,93 @@
                 </Grid>
             </Border>
 
-            <!-- Placeholder bezel + LCD. Real sprite atlas lands in M2; the
-                 amber here is just the default theme's illumination colour. -->
-            <Border Grid.Row="1" Background="#26262A" BorderBrush="#5A5A62" BorderThickness="1">
-                <Border Margin="8"
-                        Background="#120A00"
+            <!-- Placeholder bezel + LCD. The real sprite atlas lands in M2. -->
+            <Border Grid.Row="1"
+                    Background="{StaticResource BezelFace}"
+                    BorderBrush="{StaticResource BezelEdgeLight}"
+                    BorderThickness="1,0,1,0">
+                <Border Margin="6,5,6,3"
+                        Background="{StaticResource LcdBackground}"
                         BorderBrush="#000000"
                         BorderThickness="1">
-                    <StackPanel VerticalAlignment="Center" Margin="8,0,0,0">
-                        <TextBlock x:Name="Readout"
-                                   Text="M0  SKELETON"
-                                   Foreground="#FFA23A"
+                    <Grid Margin="5,3,5,3">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Click to toggle elapsed / remaining. -->
+                        <TextBlock x:Name="TimeReadout"
+                                   Grid.Row="0" Grid.Column="0"
+                                   Text="0:00"
+                                   Foreground="{StaticResource LcdText}"
                                    FontFamily="Consolas"
-                                   FontSize="11" />
-                        <TextBlock x:Name="ScaleReadout"
-                                   Foreground="#7A4A12"
+                                   FontSize="14"
+                                   Cursor="Hand"
+                                   MouseLeftButtonDown="OnTimeReadoutClick" />
+
+                        <TextBlock x:Name="StateReadout"
+                                   Grid.Row="0" Grid.Column="1"
+                                   Text="STOPPED"
+                                   Foreground="{StaticResource LcdTextDim}"
                                    FontFamily="Consolas"
                                    FontSize="8"
-                                   Margin="0,3,0,0" />
-                    </StackPanel>
+                                   HorizontalAlignment="Right"
+                                   VerticalAlignment="Bottom"
+                                   Margin="0,0,0,2" />
+
+                        <TextBlock x:Name="TitleReadout"
+                                   Grid.Row="1" Grid.ColumnSpan="2"
+                                   Text="DROP FILES OR A FOLDER HERE"
+                                   Foreground="{StaticResource LcdText}"
+                                   FontFamily="Consolas"
+                                   FontSize="9"
+                                   TextTrimming="CharacterEllipsis"
+                                   Margin="0,1,0,0" />
+
+                        <Slider x:Name="SeekBar"
+                                Grid.Row="2" Grid.ColumnSpan="2"
+                                Minimum="0"
+                                Maximum="1"
+                                Height="14"
+                                Focusable="False"
+                                IsMoveToPointEnabled="True"
+                                VerticalAlignment="Bottom"
+                                Foreground="{StaticResource LcdText}"
+                                ValueChanged="OnSeekBarValueChanged" />
+                    </Grid>
                 </Border>
+            </Border>
+
+            <!-- Transport. Sprite buttons replace these at M2. -->
+            <Border Grid.Row="2"
+                    Background="{StaticResource BezelFace}"
+                    BorderBrush="{StaticResource BezelEdgeLight}"
+                    BorderThickness="1,0,1,1">
+                <StackPanel Orientation="Horizontal" Margin="6,3,6,3" VerticalAlignment="Center">
+                    <Button Style="{StaticResource TransportButton}" Content="|&lt;" Click="OnPreviousClick" ToolTip="Previous (Z)" />
+                    <Button Style="{StaticResource TransportButton}" Content="&gt;"  Click="OnPlayClick" ToolTip="Play (X)" />
+                    <Button Style="{StaticResource TransportButton}" Content="||" Click="OnPauseClick" ToolTip="Pause (C)" />
+                    <Button Style="{StaticResource TransportButton}" Content="[]" Click="OnStopClick" ToolTip="Stop (V)" />
+                    <Button Style="{StaticResource TransportButton}" Content="&gt;|" Click="OnNextClick" ToolTip="Next (B)" />
+
+                    <Button x:Name="ShuffleButton" Style="{StaticResource TransportButton}" Width="30"
+                            Content="SHUF" Click="OnShuffleClick" Margin="8,0,2,0" ToolTip="Shuffle (S)" />
+                    <Button x:Name="RepeatButton" Style="{StaticResource TransportButton}" Width="30"
+                            Content="RPT" Click="OnRepeatClick" ToolTip="Repeat (R)" />
+
+                    <TextBlock x:Name="ScaleReadout"
+                               Foreground="{StaticResource LcdTextDim}"
+                               FontFamily="Consolas"
+                               FontSize="8"
+                               VerticalAlignment="Center"
+                               Margin="8,0,0,0" />
+                </StackPanel>
             </Border>
         </Grid>
     </skin:ScaledHost>

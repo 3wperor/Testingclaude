@@ -49,6 +49,7 @@ src/
     Analysis/            FFT tap, band bucketing, peak-hold
     Library/             SQLite index, scanner, tag reading, art cache
     Themes/              theme model, JSON (de)serialization, validation
+  Headunit.Audio.Windows/   net8.0-windows — WASAPI output (NAudio) behind IAudioEngine
   Headunit.Skin/            net8.0-windows — sprite atlas, tinting, widget primitives
   Headunit.Player.Windows/  net8.0-windows — WPF shell, windows, input, tray, SMTC
 tests/
@@ -225,8 +226,8 @@ double-click to play. The full Winamp-style PL window comes in phase 2.
 
 | # | Milestone | What "done" means |
 |---|---|---|
-| **M0** | Skeleton | Solution, three projects, CI build, xUnit runs. Empty borderless 275×116 window at 1x/2x. |
-| **M1** | Audio spine | Play/pause/stop/seek/next/prev of a hard-coded file list through WASAPI. Correct time readout. No skin yet. |
+| **M0** | Skeleton | ✅ Solution, projects, CI build, xUnit runs. Borderless 275×116 window at 1x–4x. |
+| **M1** | Audio spine | ✅ Play/pause/stop/seek/next/prev through WASAPI, drag-and-drop loading, shuffle/repeat, correct time readout. No skin yet. |
 | **M2** | Skin engine | Grayscale atlas + tint LUT + sprite blitting. Main window fully drawn and interactive: transport, seek bar, volume, balance, LCD readout with scrolling title. |
 | **M3** | EQ + visualizer | Equalizer window with working DSP, preamp, on/auto, preset save/load/import. Spectrum + oscilloscope modes. |
 | **M4** | Library | Watched folders, scanner, SQLite + FTS5, art cache, library window, queue, shuffle/repeat. |
