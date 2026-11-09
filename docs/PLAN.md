@@ -48,12 +48,16 @@ src/
     Equalizer/           10-band biquad chain + preset store
     Analysis/            FFT tap, band bucketing, peak-hold
     Library/             SQLite index, scanner, tag reading, art cache
-    Themes/              theme model, JSON (de)serialization, validation
+    Themes/              theme tokens + model, presets, JSON (de)serialization
+    Graphics/            mask atlas, tint LUTs, software blitter, PNG export
+    Ui/                  art, fonts, layout, hit-testing, input, frame renderer
   Headunit.Audio.Windows/   net8.0-windows — WASAPI output (NAudio) behind IAudioEngine
-  Headunit.Skin/            net8.0-windows — sprite atlas, tinting, widget primitives
+  Headunit.Skin/            net8.0-windows — presents a frame, forwards the pointer, integer scaling
   Headunit.Player.Windows/  net8.0-windows — WPF shell, windows, input, tray, SMTC
 tests/
-  Headunit.Core.Tests/      xUnit — EQ math, bucketing, scanner, theme round-trip
+  Headunit.Core.Tests/      xUnit — EQ math, bucketing, scanner, theme round-trip, rendering
+tools/
+  Headunit.SkinPreview/     renders every window in every theme to PNG
 assets/
   sprites/               source PSD/Aseprite + exported grayscale PNG atlases
 themes/                  built-in presets as .rtheme.json
@@ -126,9 +130,24 @@ midtone → highlight), and we bake the tinted atlas into a cached bitmap
 as cheap as the original.
 
 ```
-tinted.rgb = ramp[ source.luminance ]      // 256-entry LUT per token
-tinted.a   = source.a
+tinted.rgb = lut[ source.token ][ source.luminance ]   // 256-entry LUT per token
+tinted.a   = source.a × (glow strength, for lcd.glow)
 ```
+
+Each mask pixel carries its **token** as well as its luminance, so one sprite
+can mix bezel, glyph and LCD pixels. A ramp token runs shadow (0) → mid (128)
+→ high (255); a flat token runs black (0) → its colour (255), so art drawn at
+full luminance lands exactly on the theme author's hex value. The interchange
+PNG stores luminance in R, token index in G and alpha in A.
+
+LCD elements are baked twice — a lit core and a soft one-pixel halo in
+`lcd.glow` — and text draws every halo before any core so neighbouring glyphs'
+glow never washes over each other. Unlit seven-segment and indicator segments
+are printed into the background in `lcd.text.dim` ("ghost segments"), which is
+why that token wants to be *much* darker than `lcd.text`.
+
+As built at M2: a 512×215 atlas of 219 sprites, 0.7 ms to re-tint, ~0.15 ms to
+render a full frame.
 
 That single decision gives us: infinite colorways, one set of source art, no
 shader requirement, and pixel-exact 1x output.
@@ -228,7 +247,7 @@ double-click to play. The full Winamp-style PL window comes in phase 2.
 |---|---|---|
 | **M0** | Skeleton | ✅ Solution, projects, CI build, xUnit runs. Borderless 275×116 window at 1x–4x. |
 | **M1** | Audio spine | ✅ Play/pause/stop/seek/next/prev through WASAPI, drag-and-drop loading, shuffle/repeat, correct time readout. No skin yet. |
-| **M2** | Skin engine | Grayscale atlas + tint LUT + sprite blitting. Main window fully drawn and interactive: transport, seek bar, volume, balance, LCD readout with scrolling title. |
+| **M2** | Skin engine | ✅ Grayscale atlas + tint LUT + sprite blitting. Main window fully drawn and interactive: transport, seek bar, volume, balance, LCD readout with scrolling title. |
 | **M3** | EQ + visualizer | Equalizer window with working DSP, preamp, on/auto, preset save/load/import. Spectrum + oscilloscope modes. |
 | **M4** | Library | Watched folders, scanner, SQLite + FTS5, art cache, library window, queue, shuffle/repeat. |
 | **M5** | Theming | Theme model, 8 presets, customizer window, import/export, live re-tint. |
@@ -279,6 +298,11 @@ made on Windows looks identical on Mac.
 | Auto-update | **GitHub Releases + check on launch** | A version check and a "download" link. No silent background installer — this is a music player, not a browser. |
 | Code signing | **Ship v1 unsigned** | ~$200/yr for an OV cert is not worth it before anyone has used the thing. Revisit at the first public release; document the SmartScreen warning in the README until then. |
 | Minimum Windows | **Windows 10 1809 (build 17763), x64 + arm64** | The floor for `SystemMediaTransportControls` and CsWinRT. Encoded in the TFM as `net8.0-windows10.0.17763.0`.|
+| Where the skin engine lives | **`Headunit.Core`, not `Headunit.Skin`** | The whole pixel pipeline — atlas, tinting, layout, hit-testing, the frame renderer — is pure C# over a `uint[]`. Putting it in Core means it is unit-tested on Linux CI and renders identically everywhere; `Headunit.Skin` shrinks to "copy frame into a `WriteableBitmap`, report the pointer in art pixels". |
+| How the art is authored | **In code (`Ui/MainArt.cs`), exportable as PNG** | Diffable, reviewable, exactly reproducible, and no binary art files to merge. `SkinPreview` exports the mask atlas, so hand-drawn art can replace any sprite later without touching the renderer. |
+| LCD character set | **Uppercase 5×7 dot matrix, with Latin folding** | What real head units show. Accented Latin folds to its base letter (BJÖRK → BJORK); scripts the font can't draw show as `?` until a fallback font is worth the art budget. |
+| Clock past 99 minutes | **Switches to H:MM** | Four digits can't show 1:45:00 as MM:SS; a long DJ mix should read as hours, not lie. |
+| Repeat-one | **"RPT 1" on the button and an extra `1` segment on the LCD** | The classic layout has one repeat toggle; we have three states and needed to show the third without a new control. |
 
 ## 11. Still open
 

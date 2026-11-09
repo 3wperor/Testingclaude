@@ -24,6 +24,12 @@ public interface IAudioEngine : IDisposable
     /// <summary>Linear 0.0 to 1.0.</summary>
     float Volume { get; set; }
 
+    /// <summary>-1 (left) to +1 (right); applied with <see cref="BalanceLaw"/>.</summary>
+    float Balance { get; set; }
+
+    /// <summary>Format of the loaded file, or null when nothing is loaded.</summary>
+    StreamInfo? Info { get; }
+
     void Load(string path);
 
     void Play();

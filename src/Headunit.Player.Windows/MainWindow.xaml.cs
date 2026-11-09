@@ -1,45 +1,67 @@
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Headunit.Audio;
+using Headunit.Core.Graphics;
 using Headunit.Core.Layout;
 using Headunit.Core.Playback;
+using Headunit.Core.Themes;
+using Headunit.Core.Ui;
+using Headunit.Skin;
 
 namespace Headunit.Player;
 
 public partial class MainWindow : Window
 {
+    private const float VolumeStep = 0.05f;
+
     private readonly PlayerController _player;
-    private readonly DispatcherTimer _tick;
-    private bool _showRemaining;
-    private bool _updatingSeekBar;
+    private readonly MainViewState _view = new();
+    private readonly MainInput _input;
+    private readonly MainRenderer _renderer;
+    private readonly Surface _frame = new(WindowMetrics.MainWidth, WindowMetrics.MainHeight);
+    private readonly SkinSurface _surface = new(WindowMetrics.MainWidth, WindowMetrics.MainHeight);
+    private readonly Stopwatch _clock = Stopwatch.StartNew();
+    private readonly DispatcherTimer _frameTimer;
+    private int _themeIndex;
+    private bool _closed;
 
     public MainWindow()
     {
         InitializeComponent();
 
+        _input = new MainInput(_view);
+        _renderer = new MainRenderer(MainArt.Build(), ThemePresets.All[_themeIndex]);
+
+        Host.Child = _surface;
+        _surface.ArtPointerDown += OnArtPointerDown;
+        _surface.ArtPointerMove += (_, e) => Act(_input.PointerMove(e.X, e.Y));
+        _surface.ArtPointerUp += (_, e) => Act(_input.PointerUp(e.X, e.Y));
+        _surface.ArtPointerCancelled += (_, _) => _input.Cancel();
+
         _player = new PlayerController(new NAudioEngine());
-        _player.TrackChanged += (_, _) => Refresh();
-        _player.StateChanged += (_, _) => Refresh();
         _player.TrackFailed += OnTrackFailed;
 
-        // 100 ms is comfortably below the eye's tolerance for a ticking clock
-        // and nowhere near often enough to matter for CPU.
-        _tick = new DispatcherTimer(DispatcherPriority.Render)
+        // ~30 fps: smooth enough for the marquee and, at M3, the visualiser;
+        // a 275x116 software frame costs well under a millisecond.
+        _frameTimer = new DispatcherTimer(DispatcherPriority.Render)
         {
-            Interval = TimeSpan.FromMilliseconds(100),
+            Interval = TimeSpan.FromMilliseconds(33),
         };
-        _tick.Tick += (_, _) => Refresh();
-        _tick.Start();
+        _frameTimer.Tick += (_, _) => RenderFrame();
+        _frameTimer.Start();
 
         SourceInitialized += (_, _) =>
         {
             Host.Scale = PickInitialScale();
-            Refresh();
+            RenderFrame();
         };
     }
+
+    private TimeSpan Now => _clock.Elapsed;
 
     /// <summary>
     /// Open at the largest integer scale that comfortably fits the work area,
@@ -59,47 +81,172 @@ public partial class MainWindow : Window
             WindowMetrics.MainWidth, WindowMetrics.MainHeight, workWidth, budgetHeight);
     }
 
-    private void Refresh()
+    // ---- Frame -------------------------------------------------------------
+
+    private void RenderFrame()
     {
-        var duration = _player.Duration;
-        var position = _player.Position;
-
-        TimeReadout.Text = TimeDisplay.Format(position, duration, _showRemaining);
-        StateReadout.Text = _player.State.ToString().ToUpperInvariant();
-
-        var track = _player.Queue.Current;
-        if (track is not null)
+        if (_closed)
         {
-            var ordinal = _player.Queue.CurrentIndex + 1;
-            TitleReadout.Text = $"{ordinal}. {track.Title}".ToUpperInvariant();
+            return; // e.g. the close button's own release, after the player is gone
         }
 
-        _updatingSeekBar = true;
-        SeekBar.Value = duration > TimeSpan.Zero
-            ? Math.Clamp(position.TotalSeconds / duration.TotalSeconds, 0, 1)
-            : 0;
-        _updatingSeekBar = false;
-
-        ShuffleButton.Opacity = _player.Queue.Shuffle ? 1.0 : 0.45;
-        RepeatButton.Opacity = _player.Queue.Repeat == RepeatMode.Off ? 0.45 : 1.0;
-        RepeatButton.Content = _player.Queue.Repeat == RepeatMode.One ? "RPT1" : "RPT";
-
-        UpdateScaleReadout();
+        var now = Now;
+        SyncView(now);
+        _renderer.Render(_frame, _view, _input, now);
+        _surface.Present(_frame);
     }
 
-    private void UpdateScaleReadout()
+    /// <summary>Copies the player's state into the plain data the renderer reads.</summary>
+    private void SyncView(TimeSpan now)
     {
-        var dpi = VisualTreeHelper.GetDpi(this);
-        var physical = ScaledGeometry.ToPhysical(
-            WindowMetrics.MainWidth, WindowMetrics.MainHeight, Host.Scale);
+        _view.State = _player.State;
+        _view.Position = _player.Position;
+        _view.Duration = _player.Duration;
+        _view.Volume = _player.Volume;
+        _view.Balance = _player.Balance;
+        _view.Shuffle = _player.Queue.Shuffle;
+        _view.Repeat = _player.Queue.Repeat;
+        _view.Info = _player.Info;
 
-        ScaleReadout.Text = $"{Host.Scale}X {physical.Width}x{physical.Height} @{dpi.DpiScaleX * 100:0}%";
+        var track = _player.Queue.Current;
+        _view.SetTitle(
+            track is null ? string.Empty : TitleText.Compose(_player.Queue.CurrentIndex, track, _player.Duration),
+            now);
+    }
+
+    private void Say(string message) => _view.ShowMessage(message, Now);
+
+    // ---- Pointer -----------------------------------------------------------
+
+    private void OnArtPointerDown(object? sender, ArtPointerEventArgs e)
+    {
+        var action = _input.PointerDown(e.X, e.Y);
+        if (action?.Kind == UiActionKind.DragWindow)
+        {
+            // Hand the pointer to the OS for the move; it never comes back to
+            // us as a release, so drop our capture first.
+            _input.Cancel();
+            _surface.ReleaseMouseCapture();
+            DragMove();
+            return;
+        }
+
+        Act(action);
+    }
+
+    /// <summary>The one place a UI gesture becomes a player command.</summary>
+    private void Act(UiAction? action)
+    {
+        if (action is { } a)
+        {
+            switch (a.Kind)
+            {
+                case UiActionKind.Click:
+                    Click(a.Widget);
+                    break;
+
+                case UiActionKind.Volume:
+                    _player.Volume = (float)a.Value;
+                    break;
+
+                case UiActionKind.Balance:
+                    _player.Balance = (float)a.Value;
+                    break;
+
+                case UiActionKind.Seek:
+                    _player.Seek(_player.Duration * a.Value);
+                    break;
+            }
+        }
+
+        // Every gesture redraws immediately; waiting for the next tick makes
+        // buttons feel laggy.
+        RenderFrame();
+    }
+
+    private void Click(MainWidget widget)
+    {
+        switch (widget)
+        {
+            case MainWidget.Minimize: WindowState = WindowState.Minimized; break;
+            case MainWidget.Close: Close(); break;
+            case MainWidget.TimeReadout: _view.ShowRemaining = !_view.ShowRemaining; break;
+            case MainWidget.Previous: _player.Previous(); break;
+            case MainWidget.Play: Play(); break;
+            case MainWidget.Pause: _player.TogglePlayPause(); break;
+            case MainWidget.Stop: _player.Stop(); break;
+            case MainWidget.Next: _player.Next(); break;
+            case MainWidget.Eject: OpenFiles(); break;
+            case MainWidget.Shuffle: ToggleShuffle(); break;
+            case MainWidget.Repeat: CycleRepeat(); break;
+
+            // The equaliser window is M3 and the playlist window M4; until
+            // then the buttons say so rather than doing nothing silently.
+            case MainWidget.EqToggle: Say("EQUALIZER: NOT BUILT YET"); break;
+            case MainWidget.PlaylistToggle: Say("PLAYLIST: NOT BUILT YET"); break;
+        }
+    }
+
+    // ---- Transport ---------------------------------------------------------
+
+    private void Play()
+    {
+        if (_player.State != PlaybackState.Playing)
+        {
+            _player.TogglePlayPause();
+        }
+    }
+
+    private void ToggleShuffle()
+    {
+        _player.Queue.Shuffle = !_player.Queue.Shuffle;
+        Say(TitleText.Shuffle(_player.Queue.Shuffle));
+    }
+
+    private void CycleRepeat()
+    {
+        _player.Queue.Repeat = _player.Queue.Repeat switch
+        {
+            RepeatMode.Off => RepeatMode.All,
+            RepeatMode.All => RepeatMode.One,
+            _ => RepeatMode.Off,
+        };
+        Say(TitleText.Repeat(_player.Queue.Repeat));
+    }
+
+    private void NudgeVolume(float delta)
+    {
+        _player.Volume += delta;
+        Say(TitleText.Volume(_player.Volume));
+    }
+
+    private void CycleTheme()
+    {
+        _themeIndex = (_themeIndex + 1) % ThemePresets.All.Count;
+        _renderer.SetTheme(ThemePresets.All[_themeIndex]);
+        Say($"THEME: {ThemePresets.All[_themeIndex].Name}");
     }
 
     private void OnTrackFailed(object? sender, PlaybackFailedEventArgs e)
-        => TitleReadout.Text = $"CANNOT PLAY {Path.GetFileName(e.Path)}".ToUpperInvariant();
+        => _view.ShowMessage($"CANNOT PLAY {Path.GetFileName(e.Path)}", Now, TimeSpan.FromSeconds(4));
 
     // ---- Loading -----------------------------------------------------------
+
+    private void OpenFiles()
+    {
+        var patterns = string.Join(';', AudioFormats.SupportedExtensions.Select(x => "*" + x));
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Open audio files",
+            Multiselect = true,
+            Filter = $"Audio files|{patterns}|All files|*.*",
+        };
+
+        if (dialog.ShowDialog(this) == true)
+        {
+            Load(dialog.FileNames, append: false);
+        }
+    }
 
     private void OnDragOver(object sender, DragEventArgs e)
     {
@@ -111,23 +258,26 @@ public partial class MainWindow : Window
 
     private void OnDrop(object sender, DragEventArgs e)
     {
-        if (e.Data.GetData(DataFormats.FileDrop) is not string[] paths)
+        if (e.Data.GetData(DataFormats.FileDrop) is string[] paths)
         {
-            return;
+            // Shift-drop appends to the queue; a plain drop replaces it.
+            Load(paths, append: Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));
         }
+    }
 
+    private void Load(IEnumerable<string> paths, bool append)
+    {
         var tracks = Expand(paths).Select(Track.FromFile).ToList();
         if (tracks.Count == 0)
         {
-            TitleReadout.Text = "NO PLAYABLE FILES";
+            Say("NO PLAYABLE FILES");
             return;
         }
 
-        // Shift-drop appends to the queue; a plain drop replaces it.
-        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) && _player.Queue.Count > 0)
+        if (append && _player.Queue.Count > 0)
         {
             _player.Queue.Append(tracks);
-            Refresh();
+            Say($"ADDED {tracks.Count} TRACK{(tracks.Count == 1 ? string.Empty : "S")}");
             return;
         }
 
@@ -159,77 +309,23 @@ public partial class MainWindow : Window
         }
     }
 
-    // ---- Transport ---------------------------------------------------------
-
-    private void OnPreviousClick(object sender, RoutedEventArgs e) => _player.Previous();
-
-    private void OnPlayClick(object sender, RoutedEventArgs e)
-    {
-        if (_player.State != PlaybackState.Playing)
-        {
-            _player.TogglePlayPause();
-        }
-    }
-
-    private void OnPauseClick(object sender, RoutedEventArgs e) => _player.TogglePlayPause();
-
-    private void OnStopClick(object sender, RoutedEventArgs e) => _player.Stop();
-
-    private void OnNextClick(object sender, RoutedEventArgs e) => _player.Next();
-
-    private void OnShuffleClick(object sender, RoutedEventArgs e)
-    {
-        _player.Queue.Shuffle = !_player.Queue.Shuffle;
-        Refresh();
-    }
-
-    private void OnRepeatClick(object sender, RoutedEventArgs e)
-    {
-        _player.Queue.Repeat = _player.Queue.Repeat switch
-        {
-            RepeatMode.Off => RepeatMode.All,
-            RepeatMode.All => RepeatMode.One,
-            _ => RepeatMode.Off,
-        };
-        Refresh();
-    }
-
-    private void OnSeekBarValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-    {
-        // The timer writes this control every 100 ms; only react to the user.
-        if (_updatingSeekBar || _player.Duration <= TimeSpan.Zero)
-        {
-            return;
-        }
-
-        _player.Seek(_player.Duration * e.NewValue);
-    }
-
-    private void OnTimeReadoutClick(object sender, MouseButtonEventArgs e)
-    {
-        _showRemaining = !_showRemaining;
-        Refresh();
-    }
-
     // ---- Window ------------------------------------------------------------
 
-    private void OnTitleBarMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    private void OnActivated(object? sender, EventArgs e) => _view.IsActive = true;
+
+    private void OnDeactivated(object? sender, EventArgs e)
     {
-        if (e.ButtonState == MouseButtonState.Pressed)
-        {
-            DragMove();
-        }
+        _view.IsActive = false;
+        _input.Cancel();
     }
 
-    private void OnCloseClick(object sender, MouseButtonEventArgs e)
-    {
-        e.Handled = true;
-        Close();
-    }
+    private void OnMouseWheel(object sender, MouseWheelEventArgs e)
+        => NudgeVolume(e.Delta > 0 ? VolumeStep : -VolumeStep);
 
     private void OnClosed(object? sender, EventArgs e)
     {
-        _tick.Stop();
+        _closed = true;
+        _frameTimer.Stop();
         _player.Dispose();
     }
 
@@ -249,7 +345,9 @@ public partial class MainWindow : Window
             if (requested != 0)
             {
                 Host.Scale = requested;
-                Refresh();
+                var dpi = VisualTreeHelper.GetDpi(this);
+                var physical = ScaledGeometry.ToPhysical(WindowMetrics.MainWidth, WindowMetrics.MainHeight, Host.Scale);
+                Say($"ZOOM {Host.Scale}X  {physical.Width}X{physical.Height} @{dpi.DpiScaleX * 100:0}%");
                 e.Handled = true;
             }
 
@@ -260,20 +358,23 @@ public partial class MainWindow : Window
         switch (e.Key)
         {
             case Key.Z: _player.Previous(); break;
-            case Key.X: OnPlayClick(sender, new RoutedEventArgs()); break;
+            case Key.X: Play(); break;
             case Key.C: _player.TogglePlayPause(); break;
             case Key.V: _player.Stop(); break;
             case Key.B: _player.Next(); break;
-            case Key.S: OnShuffleClick(sender, new RoutedEventArgs()); break;
-            case Key.R: OnRepeatClick(sender, new RoutedEventArgs()); break;
+            case Key.L: OpenFiles(); break;
+            case Key.S: ToggleShuffle(); break;
+            case Key.R: CycleRepeat(); break;
+            case Key.T: CycleTheme(); break;
             case Key.Space: _player.TogglePlayPause(); break;
             case Key.Left: _player.Seek(_player.Position - TimeSpan.FromSeconds(5)); break;
             case Key.Right: _player.Seek(_player.Position + TimeSpan.FromSeconds(5)); break;
-            case Key.Up: _player.Volume += 0.05f; break;
-            case Key.Down: _player.Volume -= 0.05f; break;
+            case Key.Up: NudgeVolume(VolumeStep); break;
+            case Key.Down: NudgeVolume(-VolumeStep); break;
             default: return;
         }
 
         e.Handled = true;
+        RenderFrame();
     }
 }

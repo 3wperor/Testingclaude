@@ -22,6 +22,9 @@ DerivedData/
 *.xcuserstate
 xcuserdata/
 
+# Skin preview renders (tools/Headunit.SkinPreview default output)
+skin-preview/
+
 # Local data
 *.db
 *.db-shm

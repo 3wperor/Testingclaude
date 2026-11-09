@@ -21,6 +21,12 @@ jobs:
         with:
           dotnet-version: '8.0.x'
       - run: dotnet test tests/Headunit.Core.Tests/Headunit.Core.Tests.csproj -c Release
+      # The skin renders headlessly, so every push gets reviewable screenshots.
+      - run: dotnet run --project tools/Headunit.SkinPreview -c Release -- skin-preview 3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skin-preview
+          path: skin-preview/
 
   # The real build. WPF cannot be compiled anywhere but Windows, so this is the
   # only job that proves the app itself builds.

@@ -10,10 +10,9 @@ namespace Headunit.Audio;
 /// <summary>
 /// WASAPI shared-mode output, via NAudio.
 /// <para>
-/// M1 is deliberately the shortest graph that plays a file:
-/// <c>AudioFileReader -> WasapiOut</c>. The equaliser, preamp, soft clip and
-/// FFT tap slot in between those two at M3 — the interface above does not
-/// change when they do.
+/// The graph is <c>AudioFileReader -> BalanceSampleProvider -> WasapiOut</c>.
+/// The equaliser, preamp, soft clip and FFT tap slot in between the reader and
+/// the balance stage at M3 — the interface above does not change when they do.
 /// </para>
 /// </summary>
 public sealed class NAudioEngine : IAudioEngine
@@ -23,8 +22,10 @@ public sealed class NAudioEngine : IAudioEngine
 
     private WasapiOut? _output;
     private AudioFileReader? _reader;
+    private BalanceSampleProvider? _balanceStage;
     private string? _path;
     private float _volume = 1f;
+    private float _balance;
 
     public PlaybackState State { get; private set; } = PlaybackState.Stopped;
 
@@ -55,6 +56,21 @@ public sealed class NAudioEngine : IAudioEngine
         }
     }
 
+    public float Balance
+    {
+        get => _balance;
+        set
+        {
+            _balance = Math.Clamp(value, -1f, 1f);
+            if (_balanceStage is not null)
+            {
+                _balanceStage.Balance = _balance;
+            }
+        }
+    }
+
+    public StreamInfo? Info { get; private set; }
+
     public event EventHandler? PlaybackEnded;
 
     public event EventHandler<PlaybackFailedEventArgs>? PlaybackFailed;
@@ -71,10 +87,17 @@ public sealed class NAudioEngine : IAudioEngine
             // Windows 10. Ogg and Opus need their own decoders; they are wired
             // up with the rest of the format work, not here.
             _reader = new AudioFileReader(path) { Volume = _volume };
+            _balanceStage = new BalanceSampleProvider(_reader) { Balance = _balance };
+            Info = new StreamInfo(
+                _reader.WaveFormat.SampleRate,
+                _reader.WaveFormat.Channels,
+                StreamInfo.EstimateKbps(new FileInfo(path).Length, _reader.TotalTime));
         }
         catch (Exception ex)
         {
             _reader = null;
+            _balanceStage = null;
+            Info = null;
             State = PlaybackState.Stopped;
             PlaybackFailed?.Invoke(this, new PlaybackFailedEventArgs(path, ex));
             return;
@@ -85,7 +108,7 @@ public sealed class NAudioEngine : IAudioEngine
 
     public void Play()
     {
-        if (_reader is null)
+        if (_reader is null || _balanceStage is null)
         {
             return;
         }
@@ -99,7 +122,7 @@ public sealed class NAudioEngine : IAudioEngine
                 // this onto an MTA thread.
                 _output = new WasapiOut(AudioClientShareMode.Shared, useEventSync: true, LatencyMilliseconds);
                 _output.PlaybackStopped += OnPlaybackStopped;
-                _output.Init(_reader);
+                _output.Init(_balanceStage);
             }
 
             _output.Play();
@@ -170,6 +193,8 @@ public sealed class NAudioEngine : IAudioEngine
         DetachOutput();
         _reader?.Dispose();
         _reader = null;
+        _balanceStage = null;
+        Info = null;
     }
 
     public void Dispose() => TearDown();

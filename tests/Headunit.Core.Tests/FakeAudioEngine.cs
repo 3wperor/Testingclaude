@@ -13,6 +13,10 @@ internal sealed class FakeAudioEngine : IAudioEngine
 
     public float Volume { get; set; } = 1f;
 
+    public float Balance { get; set; }
+
+    public StreamInfo? Info { get; set; }
+
     public string? LoadedPath { get; private set; }
 
     public List<string> LoadHistory { get; } = [];

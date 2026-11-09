@@ -30,6 +30,14 @@ public sealed class PlayerController : IDisposable
         set => _engine.Volume = Math.Clamp(value, 0f, 1f);
     }
 
+    public float Balance
+    {
+        get => _engine.Balance;
+        set => _engine.Balance = Math.Clamp(value, -1f, 1f);
+    }
+
+    public StreamInfo? Info => _engine.Info;
+
     /// <summary>
     /// How far into a track Previous restarts it instead of going back one.
     /// Every physical transport ever made behaves this way.
